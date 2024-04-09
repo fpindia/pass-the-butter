@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+notify-debouncer-mini = "0.2.0"
+libloading = "0.8.*"
+tempfile = "*"
