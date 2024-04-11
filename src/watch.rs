@@ -1,9 +1,13 @@
 use std::{path::Path, time::Duration};
 
-use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventHandler};
+use notify_debouncer_mini::{
+    new_debouncer,
+    notify::{INotifyWatcher, RecursiveMode},
+    DebounceEventHandler, Debouncer,
+};
 
 // Setup debouncer
-pub fn start_watch<F>(path: &str, f: F)
+pub fn start_watch<F>(path: &str, f: F) -> Debouncer<INotifyWatcher>
 where
     F: DebounceEventHandler,
 {
@@ -17,4 +21,6 @@ where
         .watcher()
         .watch(Path::new(&path), RecursiveMode::Recursive)
         .unwrap();
+
+    debouncer
 }

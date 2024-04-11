@@ -1,125 +1,54 @@
 pub mod compile;
-pub mod dynamic_reload;
 pub mod error;
+pub mod types;
 pub mod watch;
 
-use dynamic_reload::{DynamicReload, Lib, PlatformName, Search, Symbol, UpdateState};
-use notify_debouncer_mini::notify::{Config, RecursiveMode};
-use notify_debouncer_mini::{new_debouncer, DebounceEventHandler, DebounceEventResult};
-use std::path::Path;
-use std::sync::Arc;
-use std::thread;
+use libloading::Symbol;
+use notify_debouncer_mini::DebounceEventResult;
+use std::path::PathBuf;
+use std::str::FromStr;
+use std::thread::sleep;
 use std::time::Duration;
 use watch::start_watch;
 
-struct Plugins {
-    plugins: Vec<Arc<Lib>>,
-}
-
-impl Plugins {
-    fn add_plugin(&mut self, plugin: &Arc<Lib>) {
-        self.plugins.push(plugin.clone());
-    }
-
-    fn unload_plugins(&mut self, lib: &Arc<Lib>) {
-        for i in (0..self.plugins.len()).rev() {
-            if &self.plugins[i] == lib {
-                self.plugins.swap_remove(i);
-            }
-        }
-    }
-
-    fn reload_plugin(&mut self, lib: &Arc<Lib>) {
-        Self::add_plugin(self, lib);
-    }
-
-    // called when a lib needs to be reloaded.
-    fn reload_callback(&mut self, state: UpdateState, lib: Option<&Arc<Lib>>) {
-        match state {
-            UpdateState::Before => Self::unload_plugins(self, lib.unwrap()),
-            UpdateState::After => {
-                println!("Updated");
-                Self::reload_plugin(self, lib.unwrap());
-            }
-            UpdateState::ReloadFailed(_) => println!("Failed to reload"),
-        }
-    }
-}
+use crate::types::init_library;
 
 fn main() {
-    let mut plugs = Plugins {
-        plugins: Vec::new(),
-    };
+    let dir_path: String = String::from(".");
+    let src_path: String = format!("{}/test_shared.rs", dir_path);
+    let object_path: String = String::from("./libtest_shared.so");
 
-    // Setup the reload handler. A temporary directory will be created inside the target/debug
-    // where plugins will be loaded from. That is because on some OS:es loading a shared lib
-    // will lock the file so we can't overwrite it so this works around that issue.
-    let mut reload_handler = DynamicReload::new(
-        Some(vec!["target/debug"]),
-        Some("target/debug"),
-        Search::Default,
-        Duration::from_secs(2),
-    );
-
-    // test_shared is generated in build.rs
-    match unsafe { reload_handler.add_library("test_shared", PlatformName::Yes) } {
-        Ok(lib) => plugs.add_plugin(&lib),
-        Err(e) => {
-            println!("Unable to load dynamic lib, err {:?}", e);
-            return;
-        }
-    }
-
-    start_watch(
+    let debouncer = start_watch(
         "./test_shared.rs",
         move |res: DebounceEventResult| match res {
             // TODO: Watch a dir, and compile any path
             Ok(_) => {
                 println!("COMPILING");
-                compile::compile("./test_shared.rs", ".");
+                compile::compile(&src_path, &dir_path);
 
                 println!("LOADING");
-                unsafe {
-                    reload_handler.update(&Plugins::reload_callback, &mut plugs);
-                }
 
-                if plugs.plugins.len() > 0 {
-                    // In a real program you want to cache the symbol and not do it every time if your
-                    // application is performance critical
-                    let fun: Symbol<extern "C" fn() -> i32> =
-                        unsafe { plugs.plugins[0].lib.get(b"shared_fun\0").unwrap() };
-
-                    println!("Value {}", fun());
+                let lib = unsafe {
+                    init_library(
+                        PathBuf::from_str(&src_path).ok(),
+                        PathBuf::from(&object_path),
+                    )
                 }
+                .unwrap();
+                println!("DONE");
+
+                // In a real program you want to cache the symbol and not do it every time if your
+                // application is performance critical
+                let fun: Symbol<extern "C" fn() -> ()> =
+                    unsafe { lib.as_ref().lib.get(b"hello\0").unwrap() };
+                fun();
             }
             Err(_) => println!("CANNOT LOAD TEST"),
         },
     );
-
-    // While this is running (printing a constant number) change return value in file src/test_shared.rs
-    // build the project with cargo build and notice that this code will now return the new value
-    // loop {
-    //     unsafe {
-    //         reload_handler.update(&Plugins::reload_callback, &mut plugs);
-    //     }
-
-    //     if plugs.plugins.len() > 0 {
-    //         // In a real program you want to cache the symbol and not do it every time if your
-    //         // application is performance critical
-    //         let fun: Symbol<extern "C" fn() -> i32> =
-    //             unsafe { plugs.plugins[0].lib.get(b"shared_fun\0").unwrap() };
-
-    //         println!("Value {}", fun());
-    //     }
-
-    //     // Wait for 0.5 sec
-    //     thread::sleep(Duration::from_millis(500));
-    // }
+    let dur = Duration::from_secs(1);
+    loop {
+        sleep(dur);
+        println!("SLEEPING");
+    }
 }
-
-// |res: DebounceEventResult| match res {
-//     Ok(events) => events
-//         .iter()
-//         .for_each(|e| println!("Event {:?} for {:?}", e.kind, e.path)),
-//     Err(errors) => errors.iter().for_each(|e| println!("Error {:?}", e)),
-// },
